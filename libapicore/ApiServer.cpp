@@ -192,14 +192,20 @@ static bool parseRequestId(Json::Value& jRequest, Json::Value& jResponse)
 
     // NOTE: all errors have the same code (-32600) indicating this is an invalid request
 
-    // be sure id is there and it's not empty, otherwise raise an error
-    if (!jRequest.isMember(membername) || jRequest[membername].empty())
+    //cnote << jRequest.asString() << " " << jRequest.isObject() << "\n";
+
+     //be sure id is there and it's not empty, otherwise raise an error
+     if (!jRequest.isMember(membername) || jRequest[membername].empty())
+     //if (!jRequest.isMember(membername))
     {
         jResponse[membername] = Json::nullValue;
         jResponse["error"]["code"] = -32600;
         jResponse["error"]["message"] = "Invalid Request (missing or empty id)";
+        cwarn << "Invalid Request (missing or empty id)\n";
         return false;
     }
+
+    cnote << "111\n";
 
     // try to parse id as Uint
     if (jRequest[membername].isUInt())
@@ -208,12 +214,16 @@ static bool parseRequestId(Json::Value& jRequest, Json::Value& jResponse)
         return true;
     }
 
+    cnote << "222\n";
+
     // try to parse id as String
     if (jRequest[membername].isString())
     {
         jResponse[membername] = jRequest[membername].asString();
         return true;
     }
+
+    cnote << "333\n";
 
     // id has invalid type
     jResponse[membername] = Json::nullValue;
@@ -318,7 +328,7 @@ void ApiServer::handle_accept(std::shared_ptr<ApiConnection> session, boost::sys
             }
         });
         m_sessions.push_back(session);
-        cnote << "New API session from " << session->socket().remote_endpoint();
+        cnote << "11New API session from " << session->socket().remote_endpoint();
         session->start();
     }
     else
@@ -373,9 +383,16 @@ void ApiConnection::processRequest(Json::Value& jRequest, Json::Value& jResponse
 {
     jResponse["jsonrpc"] = "2.0";
 
+    cnote << "1processRequest\n";
+
     // Strict sanity checks over jsonrpc v2
     if (!parseRequestId(jRequest, jResponse))
+    {
+        cwarn << "parseRequestId return false\n";
         return;
+    }
+
+    cnote << "2processRequest\n";
 
     std::string jsonrpc;
     std::string _method;
@@ -384,8 +401,11 @@ void ApiConnection::processRequest(Json::Value& jRequest, Json::Value& jResponse
     {
         jResponse["error"]["code"] = -32600;
         jResponse["error"]["message"] = "Invalid Request";
+        cwarn << "getRequestValue return false\n";
         return;
     }
+
+    cwarn << "method:" << _method << "\n";
 
     // Check authentication
     if (!m_is_authenticated || _method == "api_authorize")
@@ -446,7 +466,7 @@ void ApiConnection::processRequest(Json::Value& jRequest, Json::Value& jResponse
     }
 
     assert(m_is_authenticated);
-    cnote << "API : Method " << _method << " requested";
+    cwarn << "API : Method " << _method << " requested";
     if (_method == "miner_getstat1")
     {
         jResponse["result"] = getMinerStat1();
@@ -460,7 +480,7 @@ void ApiConnection::processRequest(Json::Value& jRequest, Json::Value& jResponse
     else if (_method == "miner_shuffle")
     {
         if (!checkApiWriteAccess(m_readonly, jResponse))
-             return;
+            return;
         // Gives nonce scrambler a new range
         jResponse["result"] = true;
         Farm::f().shuffle();
@@ -738,6 +758,11 @@ void ApiConnection::processRequest(Json::Value& jRequest, Json::Value& jResponse
         jResponse["result"] = true;
     }
 
+	else if (_method == "status")
+	{
+        jResponse["result"] = getStatus();
+	}
+
     else
     {
         // Any other method not found
@@ -835,9 +860,10 @@ void ApiConnection::onRecvSocketDataCompleted(
                 try
                 {
                     std::string body = getHttpMinerStatDetail();
+                    // std::string body = "{'id': 1, 'aa': 'bb'}";
                     ss.clear();
                     ss << http_ver << " "
-                       << "200 Ok Error\r\n"
+                       << "200 Ok\r\n"
                        << "Server: " << ethminer_get_buildinfo()->project_name_with_version
                        << "\r\n"
                        << "Content-Type: text/html; charset=utf-8\r\n"
@@ -881,7 +907,8 @@ void ApiConnection::onRecvSocketDataCompleted(
                         Json::Value jMsg;
                         Json::Value jRes;
                         Json::Reader jRdr;
-                        if (jRdr.parse(line, jMsg))
+                        cnote << line << "\n";
+						if (jRdr.parse(line, jMsg))
                         {
                             try
                             {
@@ -929,6 +956,184 @@ void ApiConnection::onRecvSocketDataCompleted(
         disconnect();
     }
 }
+
+
+// void ApiConnection::onRecvSocketDataCompleted(
+//    const boost::system::error_code& ec, std::size_t bytes_transferred)
+//{
+//    /*
+//    Standard http request detection pattern
+//    1st group : any UPPERCASE word
+//    2nd group : the path
+//    3rd group : HTTP version
+//    */
+//    static std::regex http_pattern("^([A-Z]{1,6}) (\\/[\\S]*) (HTTP\\/1\\.[0-9]{1})");
+//    std::smatch http_matches;
+//
+//    if (!ec && bytes_transferred > 0)
+//    {
+//        // Extract received message and free the buffer
+//        std::string rx_message(
+//            boost::asio::buffer_cast<const char*>(m_recvBuffer.data()), bytes_transferred);
+//        m_recvBuffer.consume(bytes_transferred);
+//        m_message.append(rx_message);
+//
+//        std::string line;
+//        std::string linedelimiter;
+//        std::size_t linedelimiteroffset;
+//
+//        if (m_message.size() < 4)
+//            return;  // Wait for other data to come in
+//
+//        if (std::regex_search(
+//                m_message, http_matches, http_pattern, std::regex_constants::match_default))
+//        {
+//            // We got an HTTP request
+//            std::string http_method = http_matches[1].str();
+//            std::string http_path = http_matches[2].str();
+//            std::string http_ver = http_matches[3].str();
+//
+//            // Do we support method ?
+//            if (http_method != "GET")
+//            {
+//                std::string what = "Method " + http_method + " not allowed";
+//                std::stringstream ss;
+//                ss << http_ver << " "
+//                   << "405 Method not allowed\r\n"
+//                   << "Server: " << ethminer_get_buildinfo()->project_name_with_version << "\r\n"
+//                   << "Content-Type: text/plain\r\n"
+//                   << "Content-Length: " << what.size() << "\r\n\r\n"
+//                   << what << "\r\n";
+//                sendSocketData(ss.str(), true);
+//                m_message.clear();
+//                return;
+//            }
+//
+//            // Do we support path ?
+//            if (http_path != "/" && http_path != "/getstat1")
+//            {
+//                std::string what =
+//                    "The requested resource " + http_path + " not found on this server";
+//                std::stringstream ss;
+//                ss << http_ver << " "
+//                   << "404 Not Found\r\n"
+//                   << "Server: " << ethminer_get_buildinfo()->project_name_with_version << "\r\n"
+//                   << "Content-Type: text/plain\r\n"
+//                   << "Content-Length: " << what.size() << "\r\n\r\n"
+//                   << what << "\r\n";
+//                sendSocketData(ss.str(), true);
+//                m_message.clear();
+//                return;
+//            }
+//
+//            //// Get all the lines - we actually don't care much
+//            //// until we support other http methods or paths
+//            //// Keep this for future use (if any)
+//            //// Remember to #include <boost/algorithm/string.hpp>
+//            // std::vector<std::string> lines;
+//            // boost::split(lines, m_message, [](char _c) { return _c == '\n'; });
+//
+//            std::stringstream ss;  // Builder of the response
+//
+//            if (http_method == "GET" && (http_path == "/" || http_path == "/getstat1"))
+//            {
+//                try
+//                {
+//                    std::string body = getHttpMinerStatDetail();
+//                    ss.clear();
+//                    ss << http_ver << " "
+//                       << "200 Ok\r\n"
+//                       << "Server: " << ethminer_get_buildinfo()->project_name_with_version
+//                       << "\r\n"
+//                       << "Content-Type: text/html; charset=utf-8\r\n"
+//                       << "Content-Length: " << body.size() << "\r\n\r\n"
+//                       << body << "\r\n";
+//                }
+//                catch (const std::exception& _ex)
+//                {
+//                    std::string what = "Internal error : " + std::string(_ex.what());
+//                    ss.clear();
+//                    ss << http_ver << " "
+//                       << "500 Internal Server Error\r\n"
+//                       << "Server: " << ethminer_get_buildinfo()->project_name_with_version
+//                       << "\r\n"
+//                       << "Content-Type: text/plain\r\n"
+//                       << "Content-Length: " << what.size() << "\r\n\r\n"
+//                       << what << "\r\n";
+//                }
+//            }
+//
+//            sendSocketData(ss.str(), true);
+//            m_message.clear();
+//        }
+//        else
+//        {
+//            // We got a Json request
+//            // Process each line in the transmission
+//            linedelimiter = "\n";
+//
+//            linedelimiteroffset = m_message.find(linedelimiter);
+//            while (linedelimiteroffset != string::npos)
+//            {
+//                if (linedelimiteroffset > 0)
+//                {
+//                    line = m_message.substr(0, linedelimiteroffset);
+//                    boost::trim(line);
+//
+//                    if (!line.empty())
+//                    {
+//                        // Test validity of chunk and process
+//                        Json::Value jMsg;
+//                        Json::Value jRes;
+//                        Json::Reader jRdr;
+//                        if (jRdr.parse(line, jMsg))
+//                        {
+//                            try
+//                            {
+//                                // Run in sync so no 2 different async reads may overlap
+//                                processRequest(jMsg, jRes);
+//                            }
+//                            catch (const std::exception& _ex)
+//                            {
+//                                jRes = Json::Value();
+//                                jRes["jsonrpc"] = "2.0";
+//                                jRes["id"] = Json::Value::null;
+//                                jRes["error"]["errorcode"] = "500";
+//                                jRes["error"]["message"] = _ex.what();
+//                            }
+//                        }
+//                        else
+//                        {
+//                            jRes = Json::Value();
+//                            jRes["jsonrpc"] = "2.0";
+//                            jRes["id"] = Json::Value::null;
+//                            jRes["error"]["errorcode"] = "-32700";
+//                            string what = jRdr.getFormattedErrorMessages();
+//                            boost::replace_all(what, "\n", " ");
+//                            cwarn << "API : Got invalid Json message " << what;
+//                            jRes["error"]["message"] = "Json parse error : " + what;
+//                        }
+//
+//                        // Send response to client
+//                        sendSocketData(jRes);
+//                    }
+//                }
+//
+//                // Next line (if any)
+//                m_message.erase(0, linedelimiteroffset + 1);
+//                linedelimiteroffset = m_message.find(linedelimiter);
+//            }
+//
+//            // Eventually keep reading from socket
+//            if (m_socket.is_open())
+//                recvSocketData();
+//        }
+//    }
+//    else
+//    {
+//        disconnect();
+//    }
+//}
 
 void ApiConnection::sendSocketData(Json::Value const& jReq, bool _disconnect)
 {
@@ -1169,15 +1374,16 @@ std::string ApiConnection::getHttpMinerStatDetail()
 
         _ret << "<td class=right>" << dev::getFormattedHashes(hashrate) << "</td>";
 
-        
-        string solString = "A" + device["mining"]["shares"][0].asString() + 
-                           ":R" + device["mining"]["shares"][1].asString() +
-                           ":F" + device["mining"]["shares"][2].asString();
+
+        string solString = "A" + device["mining"]["shares"][0].asString() + ":R" +
+                           device["mining"]["shares"][1].asString() + ":F" +
+                           device["mining"]["shares"][2].asString();
         _ret << "<td class=right>" << solString << "</td>";
         _ret << "<td class=right>" << device["hardware"]["sensors"][0].asString() << "</td>";
         _ret << "<td class=right>" << device["hardware"]["sensors"][1].asString() << "</td>";
 
-        stringstream powerStream; // Round the power to 2 decimal places to remove floating point garbage
+        stringstream powerStream;  // Round the power to 2 decimal places to remove floating point
+                                   // garbage
         powerStream << fixed << setprecision(2) << device["hardware"]["sensors"][2].asDouble();
         _ret << "<td class=right>" << powerStream.str() << "</td>";
 
@@ -1276,6 +1482,158 @@ Json::Value ApiConnection::getMinerStatDetail()
     jRes["connection"] = connectioninfo;
     jRes["host"] = hostinfo;
     jRes["mining"] = mininginfo;
+
+    return jRes;
+}
+
+Json::Value ApiConnection::getStatus()
+{
+    const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    TelemetryType t = Farm::f().Telemetry();
+
+    auto runningTime = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now() - t.start);
+
+    // ostringstream version;
+    Json::Value devices = Json::Value(Json::arrayValue);
+    Json::Value jRes;
+
+    /* Host Info */
+    Json::Value hostinfo;
+    hostinfo["version"] = ethminer_get_buildinfo()->project_name_with_version;  // miner version.
+    hostinfo["runtime"] = uint64_t(runningTime.count());  // running time, in seconds.
+
+    {
+        // Even the client should know which host was queried
+        char hostName[HOST_NAME_MAX + 1];
+        if (!gethostname(hostName, HOST_NAME_MAX + 1))
+            hostinfo["name"] = hostName;
+        else
+            hostinfo["name"] = Json::Value::null;
+    }
+
+
+    /* Connection info */
+    Json::Value connectioninfo;
+    auto connection = PoolManager::p().getActiveConnection();
+    connectioninfo["uri"] = connection->str();
+    connectioninfo["connected"] = PoolManager::p().isConnected();
+    connectioninfo["switches"] = PoolManager::p().getConnectionSwitches();
+
+    /* Mining Info */
+    Json::Value mininginfo;
+    Json::Value sharesinfo = Json::Value(Json::arrayValue);
+
+    mininginfo["hashrate"] = toHex(uint32_t(t.farm.hashrate), HexPrefix::Add);
+    mininginfo["epoch"] = PoolManager::p().getCurrentEpoch();
+    mininginfo["epoch_changes"] = PoolManager::p().getEpochChanges();
+    mininginfo["difficulty"] = PoolManager::p().getCurrentDifficulty();
+
+    sharesinfo.append(t.farm.solutions.accepted);
+    sharesinfo.append(t.farm.solutions.rejected);
+    sharesinfo.append(t.farm.solutions.failed);
+    auto solution_lastupdated =
+        std::chrono::duration_cast<std::chrono::seconds>(now - t.farm.solutions.tstamp);
+    sharesinfo.append(uint64_t(solution_lastupdated.count()));  // interval in seconds from last
+                                                                // found share
+    mininginfo["shares"] = sharesinfo;
+
+    /* Monitors Info */
+    Json::Value monitorinfo;
+    auto tstop = Farm::f().get_tstop();
+    if (tstop)
+    {
+        Json::Value tempsinfo = Json::Value(Json::arrayValue);
+        tempsinfo.append(Farm::f().get_tstart());
+        tempsinfo.append(tstop);
+        monitorinfo["temperatures"] = tempsinfo;
+    }
+
+	Json::Value devicesInfo = Json::Value(Json::arrayValue);
+
+	uint32_t totalPower = 0;
+
+    /* Devices related info */
+    for (shared_ptr<Miner> miner : Farm::f().getMiners())
+    {
+        Json::Value minerInfo = getMinerStatDetailPerMiner(t, miner);
+        //devices.append(minerInfo);
+
+		unsigned int x;
+        std::stringstream ss;
+        string hexHash = minerInfo["mining"]["hashrate"].asString();
+        if (hexHash.length() > 2) {
+            hexHash = hexHash.substr(2);
+        }
+        cnote << hexHash << "\n";
+        ss << std::hex << hexHash.c_str();
+        ss >> x;
+
+        Json::Value info;
+        info["accepted_shares"] = minerInfo["mining"]["shares"][0];
+        info["accepted_shares2"] = 0;
+        info["core_clock"] = 0;
+        info["core_utilization"] = 100;
+        info["fan"] = minerInfo["hardware"]["sensors"][1];
+        info["fidelity1"] = 0;
+        info["fidelity2"] = 0;
+        info["hashrate"] = std::to_string(x / 1000000) + " M";
+        info["hashrate2"] = 0;
+        info["hashrate_raw"] = x;
+        info["hashrate_raw2"] = 0;
+        info["id"] = minerInfo["_index"];
+        info["info"] = minerInfo["hardware"]["name"];
+        info["mem_clock"] = 0;
+        info["mem_utilization"] = 100;
+        info["pci_bus_id"] = minerInfo["hardware"]["pci"];
+        info["power"] = minerInfo["hardware"]["sensors"][2];
+		totalPower += info["power"].asInt();
+        info["rejected_shares"] = minerInfo["mining"]["shares"][1];
+        info["rejected_shares2"] = 0;
+        info["temperature"] = minerInfo["hardware"]["sensors"][0];
+        devicesInfo.append(info);
+    }
+	
+
+	Json::Value miner;
+    miner["devices"] = devicesInfo;
+
+	uint32_t totalHash = uint32_t(t.farm.hashrate);
+    miner["total_hashrate"] = std::to_string(totalHash / 1000000) + " M";
+    miner["total_hashrate2"] = 0;
+    miner["total_hashrate_raw"] = totalHash;
+    miner["total_hashrate_raw2"] = 0;
+    miner["total_power_consume"] = totalPower;
+
+    jRes["miner"] = miner;
+    jRes["reboot_times"] = 0;
+    jRes["start_time"] = 0;
+
+	Json::Value stratum;
+    stratum["accepted_shares"] = mininginfo["shares"][0];
+    stratum["accepted_shares2"] = 0;
+    stratum["algorithm"] = "hns_ethash";
+    stratum["difficulty"] =
+        std::to_string(int(PoolManager::p().getCurrentDifficulty() / 10000000.0 + 0.5) / 100.0) + " G";
+    stratum["difficulty2"] = 0;
+    stratum["dual_mine"] = false;
+	stratum["latency"] = 0;
+	stratum["latency2"] = 0;
+    stratum["rejected_shares"] = mininginfo["shares"][1];
+    stratum["rejected_shares2"] = 0;
+    stratum["url"] = connectioninfo["uri"];
+    stratum["url2"] = "";
+    stratum["use_ssl"] = false;
+    stratum["use_ssl2"] = false;
+    stratum["user"] = connection->User();
+    stratum["user2"] = "";
+    jRes["stratum"] = stratum;
+
+    //jRes["monitors"] = monitorinfo;
+    //jRes["connection"] = connectioninfo;
+    //jRes["host"] = hostinfo;
+    //jRes["mining"] = mininginfo;
+    jRes["version"] = ethminer_get_buildinfo()->project_name_with_version;
 
     return jRes;
 }
